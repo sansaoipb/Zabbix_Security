@@ -1,0 +1,287 @@
+zabbix_export:
+  version: '6.0'
+  date: '2025-04-07T21:28:03Z'
+  groups:
+    - uuid: 7df96b18c230490a9a0a9e2307226338
+      name: Templates
+    - uuid: 0e85f601c04d44aab171b49f61c986a9
+      name: Templates/Custom
+    - uuid: 883e542d160943ab87b46fe30ddf27b2
+      name: Templates/Zabbix
+  templates:
+    - uuid: 534dde4e33b144ef8c82a30d78b3273d
+      template: 'Template Zabbix Security Advisories'
+      name: 'Template Zabbix Security Advisories'
+      description: 'Monitors the Zabbix Security Advisories, as published on https://www.zabbix.com/security_advisories'
+      groups:
+        - name: Templates
+        - name: Templates/Custom
+        - name: Templates/Zabbix
+      items:
+        - uuid: aa70e8a055cf43fea751327c80843b62
+          name: 'Get Zabbix Security Advisories'
+          key: 'system.run[{$ZBX_ADVISORY:"command"} {$ZBX_ADVISORY:"url"} {$ZBX_ADVISORY:"file"},nowait]'
+          delay: 0;h/3
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 7162b69876ad4412a6d41b12dc50acac
+          name: 'Retrieve the Zabbix Security Advisories'
+          key: 'vfs.file.contents[{$ZBX_ADVISORY:"file"}]'
+          delay: 0;m/10
+          trends: '0'
+          value_type: TEXT
+          description: 'Retrieves the Zabbix Security Feed JSON file from {$ZBX_ADVISORY:"file"}'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - '{$ZBX_ADVISORY:"discard.master"}'
+          tags:
+            - tag: component
+              value: zabbix_security
+            - tag: type
+              value: discovery
+        - uuid: ebae8a3e3cf34817adb8271d08f864b8
+          name: 'Last Updated'
+          key: 'vfs.file.get[{$ZBX_ADVISORY:"file"}]'
+          delay: 0;m/5
+          units: s
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.timestamp.modify
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  timestampInSecondsAtual = Math.floor(Date.now() / 1000);
+                  return (timestampInSecondsAtual - value)
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - '{$ZBX_ADVISORY:"discard.file.update"}'
+          tags:
+            - tag: component
+              value: zabbix_security
+            - tag: type
+              value: discovery
+          triggers:
+            - uuid: 6e47c0760ebe49e48d226cd1c7ab03a3
+              expression: 'last(/Template Zabbix Security Advisories/vfs.file.get[{$ZBX_ADVISORY:"file"}])>{$ZBX_ADVISORY:"alarm.file"}'
+              name: 'JSON file is out of date'
+              event_name: 'JSON file hasn''t been updated in the last {$ZBX_ADVISORY:"file"} hours'
+              priority: HIGH
+              manual_close: 'YES'
+        - uuid: 823235a1def84a178b96759f367ff423
+          name: 'Update date'
+          type: DEPENDENT
+          key: zbx_sec.last_updated
+          delay: '0'
+          trends: '0'
+          value_type: TEXT
+          description: 'Determines the last-updated value for the JSON file and stores the value as string'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.last_updated.secs
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  //Tratando hora
+                  // Converter para milissegundos e criar o objeto Date
+                  data = new Date(value* 1000);
+                  
+                  // Formatar para o formato desejado
+                  day  = data.getDate().toString()
+                  day = (day.length == 1) ? '0'+day : day
+                  month  = (data.getMonth()+1).toString()
+                  month  = (month.length == 1) ? '0'+month: month
+                  year = data.getFullYear()
+                  hours = data.getHours().toString();
+                  hours = (hours.length == 1) ? '0'+hours : hours
+                  minutes = data.getMinutes().toString();
+                  minutes = (minutes.length == 1) ? '0'+minutes : minutes
+                  seconds = data.getSeconds().toString();
+                  seconds = (seconds.length == 1) ? '0'+seconds : seconds
+                  
+                  formattedDate = day + "/" + month + "/" + year + " " + hours + ":" + minutes + ":" + seconds;
+                  
+                  return formattedDate
+          master_item:
+            key: 'vfs.file.contents[{$ZBX_ADVISORY:"file"}]'
+          tags:
+            - tag: component
+              value: zabbix_security
+            - tag: type
+              value: last_updated
+        - uuid: 0dccfebb9b98426792460ff2c65eb8a3
+          name: 'Number of CVEs'
+          type: DEPENDENT
+          key: zbx_sec.num_advisories
+          delay: '0'
+          description: 'Calculates the number of published Security Advisories'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.reports.length()
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - '{$ZBX_ADVISORY:"discard.num.cve"}'
+          master_item:
+            key: 'vfs.file.contents[{$ZBX_ADVISORY:"file"}]'
+          tags:
+            - tag: component
+              value: zabbix_security
+            - tag: type
+              value: num_advisories
+          triggers:
+            - uuid: 6e61dfad8f4c420da5a9e7739d7c4fcf
+              expression: 'change(/Template Zabbix Security Advisories/zbx_sec.num_advisories)>0'
+              name: 'A new Zabbix Security Advisory has been published'
+              status: DISABLED
+              priority: HIGH
+              description: 'A new Zabbix Security Advisory has been published, you might want to review it'
+              manual_close: 'YES'
+              tags:
+                - tag: component
+                  value: zabbix_security
+      discovery_rules:
+        - uuid: 020feb39ccaa4c67bfdfdf376fc0bdaf
+          name: 'Discover Advisories'
+          type: DEPENDENT
+          key: zbx_sec.advisories
+          delay: '0'
+          description: 'Discovers all advisories from the retrieved JSON, and creates the items required for displays'
+          item_prototypes:
+            - uuid: 8785301800594c878dd60b161d9bc182
+              name: '{#CVEREF}: {#ZBXREF}'
+              type: DEPENDENT
+              key: 'zbx_sec.advisory[{#CVEREF}]'
+              delay: '0'
+              trends: '0'
+              value_type: TEXT
+              description: |
+                Título:  {#SYNOPSIS}
+                Data de publicação:  {{#PUBLISHDATE}.regsub("(\d{4})-(\d{2})-(\d{2})", "\3/\2/\1")}
+                Pontuação:  {#SCORE} ({#SEVERITY})
+                Descrição:  {#DESCRIPTION}
+                Vetores:  {#VECTORS}
+                Resolução:  {#RESOLUTION}
+                Solução alternativa:  {#WORKAROUND}
+                Reconhecimento:  {#ACKNOWLEDGEMENT}
+                Componentes:  {#COMPONENTS}
+                URL:  https://www.zabbix.com/br/security_advisories
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.reports[?(@.cveref=="{#CVEREF}")].affected_version.first()'
+                - type: JAVASCRIPT
+                  parameters:
+                    - 'return JSON.stringify(JSON.parse(value), null, 2)'
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - '{$ZBX_ADVISORY:"discard.item.lld"}'
+              master_item:
+                key: 'vfs.file.contents[{$ZBX_ADVISORY:"file"}]'
+              tags:
+                - tag: advisory
+                  value: '{#ZBXREF}'
+                - tag: component
+                  value: zabbix_security
+                - tag: cve
+                  value: '{#CVEREF}'
+                - tag: date
+                  value: '{{#PUBLISHDATE}.regsub("(\d{4})-(\d{2})-(\d{2})", "\3/\2/\1")}'
+              trigger_prototypes:
+                - uuid: 2f2f7fd1704b482a9cdddbeabbd58c91
+                  expression: 'nodata(/Template Zabbix Security Advisories/zbx_sec.advisory[{#CVEREF}],{$ZBX_ADVISORY:"nodata.time"})=0 and date()={{#PUBLISHDATE}.regsub("(\d{4})-(\d{2})-(\d{2})", "\1\2\3")}'
+                  name: 'Advisory {#CVEREF} ({#SCOREFULL}): {#ZBXREF}'
+                  description: |
+                    Título:  {#SYNOPSIS}
+                    Data de publicação:  {{#PUBLISHDATE}.regsub("(\d{4})-(\d{2})-(\d{2})", "\3/\2/\1")}
+                    Pontuação:  {#SCORE} ({#SEVERITY})
+                    Descrição:  {#DESCRIPTION}
+                    Vetores:  {#VECTORS}
+                    Resolução:  {#RESOLUTION}
+                    Solução alternativa:  {#WORKAROUND}
+                    Reconhecimento:  {#ACKNOWLEDGEMENT}
+                    Componentes:  {#COMPONENTS}
+                    URL:  https://www.zabbix.com/br/security_advisories
+                  manual_close: 'YES'
+                  tags:
+                    - tag: component
+                      value: zabbix_security
+          master_item:
+            key: 'vfs.file.contents[{$ZBX_ADVISORY:"file"}]'
+          lld_macro_paths:
+            - lld_macro: '{#ACKNOWLEDGEMENT}'
+              path: $.acknowledgement
+            - lld_macro: '{#COMPONENTS}'
+              path: $.components
+            - lld_macro: '{#CVEREF}'
+              path: $.cveref
+            - lld_macro: '{#DESCRIPTION}'
+              path: $.description
+            - lld_macro: '{#PUBLISHDATE}'
+              path: $.publish_date
+            - lld_macro: '{#RESOLUTION}'
+              path: $.resolution
+            - lld_macro: '{#SCOREFULL}'
+              path: $.score_full
+            - lld_macro: '{#SCORE}'
+              path: $.score
+            - lld_macro: '{#SEVERITY}'
+              path: $.severity
+            - lld_macro: '{#SYNOPSIS}'
+              path: $.synopsis
+            - lld_macro: '{#VECTORS}'
+              path: $.vectors
+            - lld_macro: '{#WORKAROUND}'
+              path: $.workaround
+            - lld_macro: '{#ZBXREF}'
+              path: $.zbxref
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.reports[*]'
+          overrides:
+            - name: 'Alterar a severidade'
+              step: '1'
+              filter:
+                conditions:
+                  - macro: '{#SEVERITY}'
+                    value: ^(low|medium|high|critical)$
+                    formulaid: A
+              operations:
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: LIKE
+                  value: 'critical):'
+                  severity: DISASTER
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: LIKE
+                  value: 'high):'
+                  severity: HIGH
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: LIKE
+                  value: 'low):'
+                  severity: WARNING
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: LIKE
+                  value: 'medium):'
+                  severity: AVERAGE
+      macros:
+        - macro: '{$ZBX_ADVISORY}'
+          value: 12h
+        - macro: '{$ZBX_ADVISORY:"alarm.file"}'
+          value: 4h
+          description: 'Determines the maximum amount of time the JSON may be left un-updated. This macro is used in the trigger {$ZBX_ADVISORY:"alarm.file"}'
+        - macro: '{$ZBX_ADVISORY:"command"}'
+          value: 'cd /usr/lib/zabbix/externalscripts ; ./security.advisories'
+        - macro: '{$ZBX_ADVISORY:"discard.master"}'
+          value: 1h
+        - macro: '{$ZBX_ADVISORY:"file"}'
+          value: /tmp/jsonSecAdv
+          description: 'The URL where the find the JSON data for all advisories that are published'
+        - macro: '{$ZBX_ADVISORY:"url"}'
+          value: 'http://192.168.56.105/'
